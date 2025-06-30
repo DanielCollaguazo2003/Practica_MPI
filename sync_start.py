@@ -38,9 +38,9 @@ if len(sys.argv) > 1 and sys.argv[1] == "master":
             print(f"❌ No se pudo conectar a {host}")
     
     # Ejecutar simulación
-    subprocess.run(['mpirun', '-np', '2', 'python3', 'fire_simulation.py'])
+    subprocess.run(['mpirun', '-np', '2', 'python', 'fire_simulation.py'])
 
 # Para computadoras WORKER (Windows)
 else:
     wait_for_signal()
-    subprocess.run(['mpirun', '-np', '2', 'python', 'fire_simulation.py'])
+    subprocess.run(['mpiexec', '-np', '2', 'python', 'fire_simulation.py'])

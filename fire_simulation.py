@@ -243,15 +243,15 @@ def get_color_advanced(state):
 
 # --- GUI Mejorada (Solo Rank 0) ---
 if rank == 0:
-    print(f"🔥 INICIANDO SIMULACIÓN DE INCENDIOS FORESTALES 🔥")
-    print(f"   Coordinador ejecutándose en: {hostname}")
-    print(f"   Total de procesos: {size}")
-    print(f"   Esperando información de todos los nodos...")
+    print(f"INICIANDO SIMULACIÓN DE INCENDIOS FORESTALES 🔥")
+    print(f"Coordinador ejecutándose en: {hostname}")
+    print(f"Total de procesos: {size}")
+    print(f"Esperando información de todos los nodos...")
     
     class AdvancedFireApp:
         def __init__(self, root):
             self.root = root
-            self.root.title(f"🔥 Simulación de Incendios Forestales - MPI ({size} procesos) - {hostname}")
+            self.root.title(f"Simulación de Incendios Forestales - MPI ({size} procesos) - {hostname}")
             self.root.configure(bg="#1a1a1a")
             
             # Recopilar información de todos los procesos
