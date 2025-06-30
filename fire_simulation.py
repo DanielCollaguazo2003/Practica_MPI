@@ -30,6 +30,8 @@ logging.basicConfig(
 logger = logging.getLogger()
 logger = logging.LoggerAdapter(logger, {'rank': rank, 'hostname': hostname})
 
+print(f"[Rank {rank}] Proceso iniciado en {hostname}")
+
 # --- Configuración Avanzada ---
 ROWS, COLS = 60, 80
 STEPS = 500
@@ -241,12 +243,43 @@ def get_color_advanced(state):
     }
     return colors.get(state, "#000000")
 
-# --- GUI Mejorada (Solo Rank 0) ---
+# === SINCRONIZACIÓN INICIAL ===
+print(f"[Rank {rank}] Sincronizando con otros procesos...")
+
+# Todos los procesos envían su información
+my_info = get_detailed_host_info()
+print(f"[Rank {rank}] Enviando información: {my_info['hostname']}")
+
+# Recopilar información de todos los procesos
+all_process_info = comm.allgather(my_info)
+
+# Sincronización: todos los procesos esperan aquí
+comm.Barrier()
+print(f"[Rank {rank}] Sincronización completada")
+
+# === INICIALIZACIÓN DE DATOS ===
+print(f"[Rank {rank}] Generando datos iniciales...")
+
+# Generar terreno local
+local_forest, local_elevation, local_humidity, local_temperature = generate_complex_terrain()
+local_forest = initialize_fires(local_forest)
+
+print(f"[Rank {rank}] Datos generados. Tamaño local: {local_forest.shape}")
+
+# === GUI SOLO EN RANK 0 ===
 if rank == 0:
-    print(f"INICIANDO SIMULACIÓN DE INCENDIOS FORESTALES")
-    print(f"Coordinador ejecutándose en: {hostname}")
-    print(f"Total de procesos: {size}")
-    print(f"Esperando información de todos los nodos...")
+    print(f"🔥 SIMULACIÓN DE INCENDIOS FORESTALES - COORDINADOR 🔥")
+    print(f"   Ejecutándose en: {hostname}")
+    print(f"   Total de procesos: {size}")
+    
+    # Mostrar información de todos los procesos
+    print("\n📊 INFORMACIÓN DE PROCESOS DISTRIBUIDOS:")
+    print("=" * 60)
+    for info in all_process_info:
+        print(f"  Proceso {info['rank']}: {info['hostname']} ({info['ip']})")
+        print(f"    OS: {info['os']}")
+        print(f"    CPU: {info['cpu_cores']} cores | RAM: {info['memory_gb']} GB")
+        print("-" * 40)
     
     class AdvancedFireApp:
         def __init__(self, root):
@@ -254,19 +287,8 @@ if rank == 0:
             self.root.title(f"Simulación de Incendios Forestales - MPI ({size} procesos) - {hostname}")
             self.root.configure(bg="#1a1a1a")
             
-            # Recopilar información de todos los procesos
-            logger.info("Recopilando información de todos los procesos")
-            self.process_info = comm.gather(get_detailed_host_info(), root=0)
-            
-            # Mostrar información en consola
-            print("\n📊 INFORMACIÓN DE PROCESOS DISTRIBUIDOS:")
-            print("=" * 60)
-            for info in self.process_info:
-                print(f"  Proceso {info['rank']}: {info['hostname']} ({info['ip']})")
-                print(f"    OS: {info['os']}")
-                print(f"    CPU: {info['cpu_cores']} cores | RAM: {info['memory_gb']} GB")
-                print(f"    Uso CPU: {info['cpu_usage']}%")
-                print("-" * 40)
+            # Información de procesos
+            self.process_info = all_process_info
             
             # Frame principal horizontal
             main_frame = tk.Frame(root, bg="#1a1a1a")
@@ -338,6 +360,22 @@ if rank == 0:
             self.step = 0
             self.stats = {'trees': 0, 'fires': 0, 'burned': 0}
             
+            # Controles
+            control_frame = tk.Frame(right_panel, bg="#1a1a1a")
+            control_frame.pack(fill=tk.X, pady=5)
+            
+            self.step_label = tk.Label(control_frame, text="Paso: 0", bg="#1a1a1a", fg="#ffffff", 
+                                     font=("Arial", 12, "bold"))
+            self.step_label.pack(side=tk.LEFT, padx=10)
+            
+            pause_btn = tk.Button(control_frame, text="Pausar", command=self.toggle_pause,
+                                bg="#ff6600", fg="white", font=("Arial", 10, "bold"))
+            pause_btn.pack(side=tk.RIGHT, padx=5)
+            
+            reset_btn = tk.Button(control_frame, text="Reiniciar", command=self.reset_simulation,
+                                bg="#00aa00", fg="white", font=("Arial", 10, "bold"))
+            reset_btn.pack(side=tk.RIGHT, padx=5)
+            
             logger.info("GUI inicializada, comenzando simulación")
             threading.Thread(target=self.simulation_loop, daemon=True).start()
         
@@ -347,30 +385,164 @@ if rank == 0:
                                  font=("Arial", 11, "bold"))
             info_title.pack(pady=(10, 10))
             
-            # Frame scrollable para información de procesos
-            canvas = tk.Canvas(parent, bg="#2d2d2d", height=150, highlightthickness=0)
-            scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
-            scrollable_frame = tk.Frame(canvas, bg="#2d2d2d")
+            # Frame para información de procesos
+            info_frame = tk.Frame(parent, bg="#2d2d2d")
+            info_frame.pack(fill=tk.X, padx=5)
             
-            scrollable_frame.bind(
-                "<Configure>",
-                lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-            )
+            for i, info in enumerate(self.process_info):
+                # Frame para cada proceso
+                process_frame = tk.Frame(info_frame, bg="#404040", relief=tk.RAISED, bd=1)
+                process_frame.pack(fill=tk.X, pady=1)
+                
+                # Información del proceso
+                tk.Label(process_frame, text=f"Proceso {info['rank']}", 
+                        bg="#404040", fg="#00ff00", font=("Arial", 9, "bold")).pack(anchor="w", padx=5, pady=1)
+                
+                tk.Label(process_frame, text=f"{info['hostname'][:15]}", 
+                        bg="#404040", fg="#ffffff", font=("Arial", 8)).pack(anchor="w", padx=10)
+        
+        def create_legend(self, parent):
+            legend_items = [
+                (TREE_YOUNG, "Árbol Joven"),
+                (TREE_MATURE, "Árbol Maduro"),
+                (TREE_OLD, "Árbol Viejo"),
+                (FIRE_LOW, "Fuego Bajo"),
+                (FIRE_MEDIUM, "Fuego Medio"),
+                (FIRE_HIGH, "Fuego Alto"),
+                (BURNED, "Quemado"),
+                (EMPTY, "Tierra"),
+                (WATER, "Agua")
+            ]
             
-            canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-            canvas.configure(yscrollcommand=scrollbar.set)
+            for state, label in legend_items:
+                item_frame = tk.Frame(parent, bg="#2d2d2d")
+                item_frame.pack(fill=tk.X, padx=10, pady=1)
+                
+                color_box = tk.Label(item_frame, text="  ", bg=get_color_advanced(state), 
+                                   width=3, relief=tk.RAISED, bd=1)
+                color_box.pack(side=tk.LEFT, padx=(0, 5))
+                
+                label_text = tk.Label(item_frame, text=label, bg="#2d2d2d", fg="#ffffff", 
+                                    font=("Arial", 9), anchor="w")
+                label_text.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
+        def update_stats(self, forest_data):
+            """Actualizar estadísticas"""
+            # Limpiar frame de estadísticas
+            for widget in self.stats_frame.winfo_children():
+                widget.destroy()
             
-            if self.process_info:
-                for i, info in enumerate(self.process_info):
-                    # Frame para cada proceso
-                    process_frame = tk.Frame(scrollable_frame, bg="#404040", relief=tk.RAISED, bd=1)
-                    process_frame.pack(fill=tk.X, pady=1, padx=5)
+            # Contar estados
+            unique, counts = np.unique(forest_data, return_counts=True)
+            state_counts = dict(zip(unique, counts))
+            
+            trees = sum(state_counts.get(state, 0) for state in [TREE_YOUNG, TREE_MATURE, TREE_OLD])
+            fires = sum(state_counts.get(state, 0) for state in [FIRE_LOW, FIRE_MEDIUM, FIRE_HIGH])
+            burned = state_counts.get(BURNED, 0)
+            total_cells = forest_data.size
+            
+            stats = [
+                ("Árboles", trees, "#00ff00"),
+                ("Fuegos", fires, "#ff0000"),
+                ("Quemados", burned, "#666666"),
+                ("Total", total_cells, "#ffffff")
+            ]
+            
+            for label, value, color in stats:
+                stat_frame = tk.Frame(self.stats_frame, bg="#2d2d2d")
+                stat_frame.pack(fill=tk.X, pady=2)
+                
+                tk.Label(stat_frame, text=label, bg="#2d2d2d", fg=color, 
+                        font=("Arial", 9, "bold")).pack(side=tk.LEFT)
+                
+                tk.Label(stat_frame, text=str(value), bg="#2d2d2d", fg="#ffffff", 
+                        font=("Arial", 9)).pack(side=tk.RIGHT)
+        
+        def toggle_pause(self):
+            self.running = not self.running
+        
+        def reset_simulation(self):
+            self.step = 0
+            # Aquí podrías reinicializar los datos si fuera necesario
+        
+        def simulation_loop(self):
+            """Bucle principal de simulación"""
+            global local_forest, local_elevation, local_humidity, local_temperature
+            
+            while self.step < STEPS:
+                if not self.running:
+                    time.sleep(0.1)
+                    continue
+                
+                try:
+                    # Notificar a todos los procesos que continúen
+                    comm.bcast(True, root=0)
                     
-                    # Información del proceso
-                    tk.Label(process_frame, text=f"📍 Proceso {info['rank']}", 
-                            bg="#404040", fg="#00ff00", font=("Arial", 9, "bold")).pack(anchor="w", padx=5, pady=1)
+                    # Recopilar datos de todos los procesos
+                    all_forests = comm.gather(local_forest, root=0)
                     
-                    tk.Label(process_frame, text=f"🖥️  {info['hostname'][:15]}", 
-                            bg="#404040", fg="#ffffff", font=("Arial", 8)).pack(anchor="w", padx=10)
+                    if all_forests:
+                        # Combinar datos de todos los procesos
+                        full_forest = np.vstack(all_forests)
+                        
+                        # Actualizar visualización
+                        self.update_visualization(full_forest)
+                        self.update_stats(full_forest)
+                        
+                        # Actualizar contador de pasos
+                        self.step_label.config(text=f"Paso: {self.step}")
+                        
+                        self.step += 1
                     
-                    tk
+                    time.sleep(0.1)  # Controlar velocidad de simulación
+                    
+                except Exception as e:
+                    logger.error(f"Error en simulación: {e}")
+                    break
+            
+            # Notificar fin de simulación
+            comm.bcast(False, root=0)
+            print("Simulación completada")
+        
+        def update_visualization(self, forest_data):
+            """Actualizar la visualización del canvas"""
+            for i in range(min(ROWS, forest_data.shape[0])):
+                for j in range(min(COLS, forest_data.shape[1])):
+                    color = get_color_advanced(forest_data[i, j])
+                    self.canvas.itemconfig(self.rects[i][j], fill=color)
+            
+            # Actualizar canvas
+            self.root.update_idletasks()
+    
+    # Crear y ejecutar GUI
+    root = tk.Tk()
+    app = AdvancedFireApp(root)
+    
+    print(f"[Rank {rank}] Iniciando GUI...")
+    root.mainloop()
+
+else:
+    # === PROCESOS WORKER ===
+    print(f"[Rank {rank}] Iniciando como proceso worker...")
+    
+    while True:
+        # Esperar señal del coordinador
+        try:
+            continue_sim = comm.bcast(None, root=0)
+            
+            if not continue_sim:
+                print(f"[Rank {rank}] Recibida señal de fin de simulación")
+                break
+            
+            # Evolucionar el bosque local
+            local_forest = spread_fire_complex(local_forest, local_elevation, 
+                                             local_humidity, local_temperature, 0)
+            
+            # Enviar datos al coordinador
+            comm.gather(local_forest, root=0)
+            
+        except Exception as e:
+            logger.error(f"Error en worker: {e}")
+            break
+
+print(f"[Rank {rank}] Proceso terminado")
