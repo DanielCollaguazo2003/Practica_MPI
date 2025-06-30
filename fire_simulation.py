@@ -243,7 +243,7 @@ def get_color_advanced(state):
 
 # --- GUI Mejorada (Solo Rank 0) ---
 if rank == 0:
-    print(f"INICIANDO SIMULACIÓN DE INCENDIOS FORESTALES 🔥")
+    print(f"INICIANDO SIMULACIÓN DE INCENDIOS FORESTALES")
     print(f"Coordinador ejecutándose en: {hostname}")
     print(f"Total de procesos: {size}")
     print(f"Esperando información de todos los nodos...")
@@ -278,7 +278,7 @@ if rank == 0:
             left_panel.pack_propagate(False)
             
             # Título principal
-            title_label = tk.Label(left_panel, text="🔥 SIMULACIÓN MPI", bg="#2d2d2d", fg="#ff6600", 
+            title_label = tk.Label(left_panel, text="SIMULACIÓN MPI", bg="#2d2d2d", fg="#ff6600", 
                                  font=("Arial", 14, "bold"))
             title_label.pack(pady=(10, 5))
             
