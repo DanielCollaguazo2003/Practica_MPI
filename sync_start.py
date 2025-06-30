@@ -26,16 +26,16 @@ def send_signal(host, port=12345):
 
 # Para computadora MASTER (macOS)
 if len(sys.argv) > 1 and sys.argv[1] == "master":
-    print("🔥 INICIANDO COORDINACIÓN DISTRIBUIDA")
+    print("INICIANDO COORDINACIÓN DISTRIBUIDA")
     time.sleep(3)  # Dar tiempo a que otros estén listos
     
     # Enviar señal a todas las computadoras
     hosts = ['172.20.10.3', '172.20.10.4']  # IPs de Windows
     for host in hosts:
         if send_signal(host):
-            print(f"✅ Señal enviada a {host}")
+            print(f"Señal enviada a {host}")
         else:
-            print(f"❌ No se pudo conectar a {host}")
+            print(f"No se pudo conectar a {host}")
     
     # Ejecutar simulación
     subprocess.run(['mpirun', '-np', '2', 'python', 'fire_simulation.py'])
