@@ -49,7 +49,7 @@ def run_mpi_simulation():
     else:  # macOS/Linux
         cmd = ['mpirun', '-np', '2', 'python', 'fire_simulation.py']
     
-    print(f"🚀 Ejecutando: {' '.join(cmd)}")
+    print(f"Ejecutando: {' '.join(cmd)}")
     
     try:
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 
