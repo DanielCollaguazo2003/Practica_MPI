@@ -268,7 +268,7 @@ print(f"[Rank {rank}] Datos generados. Tamaño local: {local_forest.shape}")
 
 # === GUI SOLO EN RANK 0 ===
 if rank == 0:
-    print(f"🔥 SIMULACIÓN DE INCENDIOS FORESTALES - COORDINADOR 🔥")
+    print(f"SIMULACIÓN DE INCENDIOS FORESTALES - COORDINADOR")
     print(f"   Ejecutándose en: {hostname}")
     print(f"   Total de procesos: {size}")
     
@@ -368,7 +368,7 @@ if rank == 0:
                                      font=("Arial", 12, "bold"))
             self.step_label.pack(side=tk.LEFT, padx=10)
             
-            pause_btn = tk.Button(control_frame, text="Pausar", command=self.toggle_pause,
+            pause_btn = tk.Button(control_frame, text="⏸Pausar", command=self.toggle_pause,
                                 bg="#ff6600", fg="white", font=("Arial", 10, "bold"))
             pause_btn.pack(side=tk.RIGHT, padx=5)
             
@@ -398,7 +398,7 @@ if rank == 0:
                 tk.Label(process_frame, text=f"Proceso {info['rank']}", 
                         bg="#404040", fg="#00ff00", font=("Arial", 9, "bold")).pack(anchor="w", padx=5, pady=1)
                 
-                tk.Label(process_frame, text=f"{info['hostname'][:15]}", 
+                tk.Label(process_frame, text=f" {info['hostname'][:15]}", 
                         bg="#404040", fg="#ffffff", font=("Arial", 8)).pack(anchor="w", padx=10)
         
         def create_legend(self, parent):

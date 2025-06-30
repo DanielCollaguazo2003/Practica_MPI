@@ -45,9 +45,9 @@ def send_signal(host, port=12345, timeout=5):
 def run_mpi_simulation():
     """Ejecutar la simulación MPI"""
     if os.name == 'nt':  # Windows
-        cmd = ['mpiexec', '-np', '2', 'python', 'fire_simulation_fixed.py']
+        cmd = ['mpiexec', '-np', '2', 'python', 'fire_simulation.py']
     else:  # macOS/Linux
-        cmd = ['mpirun', '-np', '2', 'python', 'fire_simulation_fixed.py']
+        cmd = ['mpirun', '-np', '2', 'python', 'fire_simulation.py']
     
     print(f"🚀 Ejecutando: {' '.join(cmd)}")
     
