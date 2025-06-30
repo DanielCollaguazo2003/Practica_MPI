@@ -273,7 +273,7 @@ if rank == 0:
     print(f"   Total de procesos: {size}")
     
     # Mostrar información de todos los procesos
-    print("\n📊 INFORMACIÓN DE PROCESOS DISTRIBUIDOS:")
+    print("\nINFORMACIÓN DE PROCESOS DISTRIBUIDOS:")
     print("=" * 60)
     for info in all_process_info:
         print(f"  Proceso {info['rank']}: {info['hostname']} ({info['ip']})")
