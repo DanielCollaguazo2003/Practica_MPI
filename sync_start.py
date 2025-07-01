@@ -16,7 +16,7 @@ def wait_for_signal(port=12345, timeout=30):
         print(f"Esperando señal en puerto {port} (timeout: {timeout}s)...")
         
         conn, addr = sock.accept()
-        print(f"Señal recibida de {addr}")
+        print(f"Señal recibida de {addr}")  # Aquí puedes ver que se recibe la señal
         conn.close()
         sock.close()
         return True
@@ -37,6 +37,7 @@ def send_signal(host, port=12345, timeout=5):
         print(f"Enviando señal a {host}:{port}...")
         sock.connect((host, port))
         sock.close()
+        print(f"Señal enviada exitosamente a {host}")
         return True
     except Exception as e:
         print(f"No se pudo conectar a {host}: {e}")
@@ -45,9 +46,9 @@ def send_signal(host, port=12345, timeout=5):
 def run_mpi_simulation():
     """Ejecutar la simulación MPI"""
     if os.name == 'nt':  # Windows
-        cmd = ['mpiexec', '-np', '2', 'python', 'fire_simulation.py']
+        cmd = ['mpiexec', '-np', '1', 'python', 'fire_simulation.py']
     else:  # macOS/Linux
-        cmd = ['mpirun', '-np', '2', 'python', 'fire_simulation.py']
+        cmd = ['mpirun', '-np', '1', 'python', 'fire_simulation.py']
     
     print(f"Ejecutando: {' '.join(cmd)}")
     
@@ -72,8 +73,8 @@ def master_mode():
     
     # Lista de computadoras worker
     worker_hosts = [
-        # '172.20.10.3',  # Windows PC 1
-        '172.20.10.4',  # Windows PC 2
+        '172.20.10.4',  # Windows PC 1
+        # '192.168.1.3',  # Windows PC 2
         # Agregar más IPs según sea necesario
     ]
     
@@ -94,13 +95,11 @@ def master_mode():
     
     if connected_workers > 0:
         print("Iniciando simulación distribuida...")
-        
         # Esperar un poco más para asegurar sincronización
         time.sleep(2)
         
         # Ejecutar simulación MPI
         success = run_mpi_simulation()
-        
         if success:
             print("Simulación completada exitosamente")
         else:
@@ -117,13 +116,10 @@ def worker_mode():
     # Esperar señal del coordinador
     if wait_for_signal():
         print("Señal recibida. Iniciando simulación...")
-        
         # Pequeña pausa para sincronización
         time.sleep(1)
-        
         # Ejecutar simulación MPI
         success = run_mpi_simulation()
-        
         if success:
             print("Simulación worker completada")
         else:
