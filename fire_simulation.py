@@ -308,8 +308,8 @@ row_start, row_end, col_start, col_end = get_region_bounds(rank, size, ROWS, COL
 print(f"[Rank {rank}] Región asignada: filas {row_start}-{row_end}, columnas {col_start}-{col_end}")
 
 # Sincronización: todos los procesos esperan aquí
-comm.Barrier()
-print(f"[Rank {rank}] Sincronización completada")
+comm.Barrier()  # Esperar a todos los procesos
+print(f"[Rank {rank}] Todos los procesos están sincronizados.")
 
 # === INICIALIZACIÓN DE DATOS ===
 print(f"[Rank {rank}] Generando datos iniciales...")
