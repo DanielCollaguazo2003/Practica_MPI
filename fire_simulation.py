@@ -327,15 +327,15 @@ if rank == 0:
     print(f"   Ejecutándose en: {hostname}")
     print(f"   Total de procesos: {size}")
     
-    # Mostrar información de todos los procesos
-    print("\nINFORMACIÓN DE PROCESOS DISTRIBUIDOS:")
+    # Mostrar información de los workers conectados (rank != 0)
+    print("\nINFORMACIÓN DE PROCESOS REMOTOS CONECTADOS:")
     print("=" * 60)
     for info in all_process_info:
-        color = get_color_for_process(info['rank'])
-        print(f"  Proceso {info['rank']}: {info['hostname']} ({info['ip']}) - Color: {color}")
-        print(f"    OS: {info['os']}")
-        print(f"    CPU: {info['cpu_cores']} cores | RAM: {info['memory_gb']} GB")
-        print("-" * 40)
+        if info['rank'] != 0:  # Mostrar solo los workers (rank != 0)
+            print(f"  Worker {info['rank']}: {info['hostname']} ({info['ip']})")
+            print(f"    OS: {info['os']}")
+            print(f"    CPU: {info['cpu_cores']} cores | RAM: {info['memory_gb']} GB")
+            print("-" * 40)
     
     class MasterFireApp:
         def __init__(self, root):
@@ -492,7 +492,7 @@ if rank == 0:
                 
                 try:
                     # Notificar a todos los procesos que continúen
-                    comm.bcast(True, root=0)
+                    comm.bcast(True, root=0)  # Notificar a todos los procesos que continúen con la simulación
 
                     # EL MASTER TAMBIÉN DEBE PROCESAR SU PROPIA REGIÓN
                     local_forest = spread_process_fire(local_forest, local_elevation, 
@@ -639,35 +639,27 @@ else:
         """Bucle de simulación para worker"""
         global local_forest, local_elevation, local_humidity, local_temperature
         step = 0
-        
         while True:
             try:
-                # Esperar señal del coordinador
-                continue_sim = comm.bcast(None, root=0)
-                
-                if not continue_sim:
+                # Esperar señal del coordinador (sincronización con master)
+                continue_simulation = comm.bcast(None, root=0)
+                if not continue_simulation:
                     print(f"[Rank {rank}] Recibida señal de fin de simulación")
                     break
-                
                 # Evolucionar el bosque local con fuego específico del proceso
-                local_forest = spread_process_fire(local_forest, local_elevation, 
-                                                    local_humidity, local_temperature, rank, step)
-                
+                local_forest = spread_process_fire(local_forest, local_elevation,
+                                                   local_humidity, local_temperature, rank, step)
                 # Actualizar visualización local
                 app.update_visualization(local_forest)
-                
-                # Enviar datos al coordinador
+                # Enviar datos al coordinador (master)
                 comm.gather({
                     'forest': local_forest,
                     'bounds': (row_start, row_end, col_start, col_end)
                 }, root=0)
-                
                 step += 1
-                
             except Exception as e:
                 logger.error(f"Error en worker {rank}: {e}")
                 break
-        
         print(f"[Rank {rank}] Worker terminado")
         root.quit()
     
