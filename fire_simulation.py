@@ -635,54 +635,90 @@ else:
             # Actualizar canvas
             self.root.update_idletasks()
     
+    def simulation_worker_loop():
+        """Bucle de simulación para worker"""
+        global local_forest, local_elevation, local_humidity, local_temperature
+        step = 0
+        
+        while True:
+            try:
+                # Esperar señal del coordinador
+                continue_sim = comm.bcast(None, root=0)
+                
+                if not continue_sim:
+                    print(f"[Rank {rank}] Recibida señal de fin de simulación")
+                    break
+                
+                # Evolucionar el bosque local con fuego específico del proceso
+                local_forest = spread_process_fire(local_forest, local_elevation, 
+                                                    local_humidity, local_temperature, rank, step)
+                
+                # Actualizar visualización local
+                app.update_visualization(local_forest)
+                
+                # Enviar datos al coordinador
+                comm.gather({
+                    'forest': local_forest,
+                    'bounds': (row_start, row_end, col_start, col_end)
+                }, root=0)
+                
+                step += 1
+                
+            except Exception as e:
+                logger.error(f"Error en worker {rank}: {e}")
+                break
+        
+        print(f"[Rank {rank}] Worker terminado")
+        root.quit()
+    
     # Crear GUI Worker en thread separado
     def create_worker_gui():
+        print(f"[Rank {rank}] Creando GUI Worker...")
+        
         root = tk.Tk()
         app = WorkerFireApp(root, rank, (row_start, row_end, col_start, col_end))
         
-        def simulation_worker_loop():
-            """Bucle de simulación para worker"""
-            global local_forest, local_elevation, local_humidity, local_temperature
-            step = 0
-            
-            while True:
-                try:
-                    # Esperar señal del coordinador
-                    continue_sim = comm.bcast(None, root=0)
-                    
-                    if not continue_sim:
-                        print(f"[Rank {rank}] Recibida señal de fin de simulación")
-                        break
-                    
-                    # Evolucionar el bosque local con fuego específico del proceso
-                    local_forest = spread_process_fire(local_forest, local_elevation, 
-                                                     local_humidity, local_temperature, rank, step)
-                    
-                    # Actualizar visualización local
-                    app.update_visualization(local_forest)
-                    
-                    # Enviar datos al coordinador
-                    comm.gather({
-                        'forest': local_forest,
-                        'bounds': (row_start, row_end, col_start, col_end)
-                    }, root=0)
-                    
-                    step += 1
-                    
-                except Exception as e:
-                    logger.error(f"Error en worker {rank}: {e}")
-                    break
-            
-            print(f"[Rank {rank}] Worker terminado")
-            root.quit()
+        # INICIAR SIMULACIÓN EN THREAD SEPARADO INMEDIATAMENTE
+        print(f"[Rank {rank}] Iniciando thread de simulación...")
+        sim_thread = threading.Thread(target=simulation_worker_loop, daemon=True)
+        sim_thread.start()
         
-        # Iniciar simulación en thread separado
-        threading.Thread(target=simulation_worker_loop, daemon=True).start()
+        # Función para actualizar GUI periódicamente
+        def update_gui():
+            try:
+                app.update_visualization(local_forest)
+                # Programar próxima actualización
+                root.after(100, update_gui)  # Actualizar cada 100ms
+            except Exception as e:
+                print(f"[Rank {rank}] Error actualizando GUI: {e}")
+        
+        # Iniciar actualizaciones de GUI
+        root.after(100, update_gui)
         
         # Ejecutar GUI
+        print(f"[Rank {rank}] Ejecutando GUI...")
         root.mainloop()
     
     # Crear y ejecutar GUI Worker
     create_worker_gui()
+    
+    print(f"[Rank {rank}] Verificando fuegos iniciales...")
+    my_fire_state = FIRE_BASE + rank
+    initial_fires = np.sum(local_forest == my_fire_state)
+    print(f"[Rank {rank}] Fuegos iniciales: {initial_fires}")
+
+    # Si no hay fuegos iniciales, crear algunos
+    if initial_fires == 0:
+        print(f"[Rank {rank}] Creando fuegos iniciales...")
+        local_forest = initialize_process_fires(local_forest, rank)
+        new_fires = np.sum(local_forest == my_fire_state)
+        print(f"[Rank {rank}] Fuegos creados: {new_fires}")
+
+    # CORRECCIÓN 4: Asegurar que solo los workers ejecuten create_worker_gui
+    if rank != 0:
+        print(f"[Rank {rank}] Ejecutando como worker...")
+        create_worker_gui()
+    else:
+        print(f"[Rank {rank}] Ejecutando como master...")
 
 print(f"[Rank {rank}] Proceso terminado")
