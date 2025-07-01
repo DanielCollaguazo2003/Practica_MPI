@@ -57,6 +57,9 @@ BURNED = 7
 ASH = 8
 WATER = 9
 
+# Nuevos estados para fuegos de diferentes procesos (10-99 reservados para fuegos por rank)
+FIRE_BASE = 10  # Base para fuegos por proceso
+
 # Configuración de red para múltiples computadoras
 def get_detailed_host_info():
     """Obtener información detallada del sistema"""
@@ -91,46 +94,84 @@ def get_detailed_host_info():
         'timestamp': datetime.datetime.now().strftime("%H:%M:%S")
     }
 
-# --- Generación de Terreno Complejo ---
-def generate_complex_terrain():
-    rows_per_proc = ROWS // size
+# --- Funciones para regiones ---
+def get_region_bounds(rank, size, total_rows, total_cols):
+    """Calcular los límites de la región para cada proceso"""
+    if size == 1:
+        return 0, total_rows, 0, total_cols
     
-    logger.info(f"Generando terreno: {rows_per_proc}x{COLS} celdas")
+    # Dividir el bosque en regiones rectangulares
+    if size <= 4:
+        # Para pocos procesos, dividir en franjas horizontales
+        rows_per_proc = total_rows // size
+        row_start = rank * rows_per_proc
+        row_end = (rank + 1) * rows_per_proc if rank < size - 1 else total_rows
+        return row_start, row_end, 0, total_cols
+    else:
+        # Para más procesos, dividir en cuadrícula
+        grid_rows = int(np.sqrt(size))
+        grid_cols = size // grid_rows
+        if grid_rows * grid_cols < size:
+            grid_cols += 1
+        
+        proc_row = rank // grid_cols
+        proc_col = rank % grid_cols
+        
+        rows_per_grid = total_rows // grid_rows
+        cols_per_grid = total_cols // grid_cols
+        
+        row_start = proc_row * rows_per_grid
+        row_end = min((proc_row + 1) * rows_per_grid, total_rows)
+        col_start = proc_col * cols_per_grid
+        col_end = min((proc_col + 1) * cols_per_grid, total_cols)
+        
+        return row_start, row_end, col_start, col_end
+
+# --- Generación de Terreno Complejo ---
+def generate_region_terrain(row_start, row_end, col_start, col_end):
+    """Generar terreno para una región específica"""
+    rows = row_end - row_start
+    cols = col_end - col_start
+    
+    logger.info(f"Generando terreno región: {rows}x{cols} celdas")
     
     # Generar diferentes tipos de vegetación
     terrain = np.random.choice([TREE_YOUNG, TREE_MATURE, TREE_OLD, EMPTY, WATER], 
-                              size=(rows_per_proc, COLS),
+                              size=(rows, cols),
                               p=[0.3, 0.4, 0.2, 0.08, 0.02])
     
     # Agregar elevación (afecta la propagación del fuego)
-    elevation = np.random.random((rows_per_proc, COLS)) * 100
+    elevation = np.random.random((rows, cols)) * 100
     
     # Humedad variable del terreno
-    humidity = np.random.uniform(0.3, 0.9, (rows_per_proc, COLS))
+    humidity = np.random.uniform(0.3, 0.9, (rows, cols))
     
     # Temperatura variable
-    temperature = np.random.uniform(20, 35, (rows_per_proc, COLS))
+    temperature = np.random.uniform(20, 35, (rows, cols))
     
-    logger.info("Terreno generado exitosamente")
+    logger.info("Terreno de región generado exitosamente")
     return terrain, elevation, humidity, temperature
 
-# --- Inicialización con múltiples focos ---
-def initialize_fires(forest):
-    num_fires = random.randint(2, 5)
+# --- Inicialización con fuegos por proceso ---
+def initialize_process_fires(forest, process_rank):
+    """Inicializar fuegos específicos para cada proceso"""
+    num_fires = random.randint(1, 3)
     fires_created = 0
+    fire_state = FIRE_BASE + process_rank  # Fuego único por proceso
     
     for _ in range(num_fires):
         i = random.randint(0, forest.shape[0] - 1)
         j = random.randint(0, forest.shape[1] - 1)
         if forest[i, j] in [TREE_YOUNG, TREE_MATURE, TREE_OLD]:
-            forest[i, j] = random.choice([FIRE_LOW, FIRE_MEDIUM, FIRE_HIGH])
+            forest[i, j] = fire_state
             fires_created += 1
     
-    logger.info(f"Inicializados {fires_created} focos de incendio")
+    logger.info(f"Inicializados {fires_created} focos de incendio para proceso {process_rank}")
     return forest
 
-# --- Propagación Avanzada del Fuego ---
-def spread_fire_complex(forest, elevation, humidity, temperature, step):
+# --- Propagación del Fuego por Proceso ---
+def spread_process_fire(forest, elevation, humidity, temperature, process_rank, step):
+    """Propagación de fuego específica por proceso"""
     new_forest = forest.copy()
     rows, cols = forest.shape
     
@@ -142,6 +183,7 @@ def spread_fire_complex(forest, elevation, humidity, temperature, step):
     }
     wind_vector = wind_vectors.get(WIND_DIRECTION, (0, 0))
     
+    my_fire_state = FIRE_BASE + process_rank
     fires_extinguished = 0
     fires_spread = 0
     
@@ -149,23 +191,21 @@ def spread_fire_complex(forest, elevation, humidity, temperature, step):
         for j in range(cols):
             cell = forest[i, j]
             
-            # Evolución del fuego
-            if cell in [FIRE_LOW, FIRE_MEDIUM, FIRE_HIGH]:
+            # Solo procesar el fuego de este proceso
+            if cell == my_fire_state:
                 # El fuego se consume gradualmente
                 burn_time = random.random()
-                if burn_time < 0.1:  # 10% chance de quemarse completamente
+                if burn_time < 0.08:  # 8% chance de quemarse completamente
                     new_forest[i, j] = BURNED
                     fires_extinguished += 1
-                elif burn_time < 0.05:  # 5% chance de intensificarse
-                    new_forest[i, j] = min(cell + 1, FIRE_HIGH)
             
             elif cell == BURNED:
                 # Cenizas después de quemar
-                if random.random() < 0.05:
+                if random.random() < 0.03:
                     new_forest[i, j] = ASH
             
             elif cell in [TREE_YOUNG, TREE_MATURE, TREE_OLD]:
-                # Calcular probabilidad de ignición
+                # Solo puede ser prendido por el fuego de este proceso
                 fire_prob = 0
                 
                 for dx, dy in directions:
@@ -173,13 +213,9 @@ def spread_fire_complex(forest, elevation, humidity, temperature, step):
                     if 0 <= ni < rows and 0 <= nj < cols:
                         neighbor = forest[ni, nj]
                         
-                        if neighbor in [FIRE_LOW, FIRE_MEDIUM, FIRE_HIGH]:
-                            # Probabilidad base según tipo de fuego
-                            base_prob = {
-                                FIRE_LOW: 0.1,
-                                FIRE_MEDIUM: 0.2,
-                                FIRE_HIGH: 0.35
-                            }[neighbor]
+                        # Solo responder al fuego de este proceso
+                        if neighbor == my_fire_state:
+                            base_prob = 0.25  # Probabilidad base
                             
                             # Factor de viento
                             wind_factor = 1.0
@@ -188,13 +224,12 @@ def spread_fire_complex(forest, elevation, humidity, temperature, step):
                             elif (-dx, -dy) == wind_vector:
                                 wind_factor = 1 - (WIND_SPEED * 0.1)
                             
-                            # Factor de elevación (fuego sube más fácil)
+                            # Factor de elevación
                             elev_factor = 1.0
-                            if ni < rows and nj < cols:
-                                if elevation[i, j] > elevation[ni, nj]:
-                                    elev_factor = 1 + ELEVATION_FACTOR
-                                else:
-                                    elev_factor = 1 - ELEVATION_FACTOR * 0.5
+                            if elevation[i, j] > elevation[ni, nj]:
+                                elev_factor = 1 + ELEVATION_FACTOR
+                            else:
+                                elev_factor = 1 - ELEVATION_FACTOR * 0.5
                             
                             # Factor de humedad
                             humid_factor = 1 - humidity[i, j]
@@ -204,39 +239,54 @@ def spread_fire_complex(forest, elevation, humidity, temperature, step):
                             
                             # Factor de tipo de árbol
                             tree_factor = {
-                                TREE_YOUNG: 0.8,   # Más resistente
+                                TREE_YOUNG: 0.8,
                                 TREE_MATURE: 1.0,
-                                TREE_OLD: 1.3      # Más inflamable
+                                TREE_OLD: 1.3
                             }[cell]
                             
                             fire_prob += base_prob * wind_factor * elev_factor * humid_factor * temp_factor * tree_factor
                 
-                # Ignición
-                if random.random() < min(fire_prob, 0.8):
-                    # Tipo de fuego según condiciones
-                    if temperature[i, j] > 30 and humidity[i, j] < 0.4:
-                        new_forest[i, j] = FIRE_HIGH
-                    elif temperature[i, j] > 25 and humidity[i, j] < 0.6:
-                        new_forest[i, j] = FIRE_MEDIUM
-                    else:
-                        new_forest[i, j] = FIRE_LOW
+                # Ignición con el fuego específico de este proceso
+                if random.random() < min(fire_prob, 0.6):
+                    new_forest[i, j] = my_fire_state
                     fires_spread += 1
     
     if fires_extinguished > 0 or fires_spread > 0:
-        logger.info(f"Paso {step}: {fires_spread} nuevos fuegos, {fires_extinguished} extinguidos")
+        logger.info(f"Proceso {process_rank}, Paso {step}: {fires_spread} nuevos fuegos, {fires_extinguished} extinguidos")
     
     return new_forest
 
-# --- Colores Mejorados ---
-def get_color_advanced(state):
+# --- Colores por Proceso ---
+def get_color_for_process(process_rank):
+    """Obtener color único para cada proceso"""
+    colors = [
+        "#FF0000",  # Rojo - Proceso 0
+        "#00FF00",  # Verde - Proceso 1
+        "#0000FF",  # Azul - Proceso 2
+        "#FFFF00",  # Amarillo - Proceso 3
+        "#FF00FF",  # Magenta - Proceso 4
+        "#00FFFF",  # Cian - Proceso 5
+        "#FFA500",  # Naranja - Proceso 6
+        "#800080",  # Púrpura - Proceso 7
+        "#FFC0CB",  # Rosa - Proceso 8
+        "#A52A2A",  # Marrón - Proceso 9
+    ]
+    return colors[process_rank % len(colors)]
+
+def get_color_advanced(state, process_info=None):
+    """Colores mejorados con soporte para fuegos por proceso"""
+    if state >= FIRE_BASE:
+        process_rank = state - FIRE_BASE
+        return get_color_for_process(process_rank)
+    
     colors = {
         EMPTY: "#8B4513",        # Tierra
         TREE_YOUNG: "#90EE90",   # Verde claro
         TREE_MATURE: "#228B22",  # Verde
         TREE_OLD: "#006400",     # Verde oscuro
-        FIRE_LOW: "#FF4500",     # Naranja
-        FIRE_MEDIUM: "#FF0000",  # Rojo
-        FIRE_HIGH: "#8B0000",    # Rojo oscuro
+        FIRE_LOW: "#FF4500",     # Naranja (fuego genérico)
+        FIRE_MEDIUM: "#FF0000",  # Rojo (fuego genérico)
+        FIRE_HIGH: "#8B0000",    # Rojo oscuro (fuego genérico)
         BURNED: "#2F2F2F",       # Gris oscuro
         ASH: "#696969",          # Gris
         WATER: "#4169E1"         # Azul
@@ -253,6 +303,10 @@ print(f"[Rank {rank}] Enviando información: {my_info['hostname']}")
 # Recopilar información de todos los procesos
 all_process_info = comm.allgather(my_info)
 
+# Calcular región para este proceso
+row_start, row_end, col_start, col_end = get_region_bounds(rank, size, ROWS, COLS)
+print(f"[Rank {rank}] Región asignada: filas {row_start}-{row_end}, columnas {col_start}-{col_end}")
+
 # Sincronización: todos los procesos esperan aquí
 comm.Barrier()
 print(f"[Rank {rank}] Sincronización completada")
@@ -260,9 +314,10 @@ print(f"[Rank {rank}] Sincronización completada")
 # === INICIALIZACIÓN DE DATOS ===
 print(f"[Rank {rank}] Generando datos iniciales...")
 
-# Generar terreno local
-local_forest, local_elevation, local_humidity, local_temperature = generate_complex_terrain()
-local_forest = initialize_fires(local_forest)
+# Generar terreno de la región
+local_forest, local_elevation, local_humidity, local_temperature = generate_region_terrain(
+    row_start, row_end, col_start, col_end)
+local_forest = initialize_process_fires(local_forest, rank)
 
 print(f"[Rank {rank}] Datos generados. Tamaño local: {local_forest.shape}")
 
@@ -276,15 +331,16 @@ if rank == 0:
     print("\nINFORMACIÓN DE PROCESOS DISTRIBUIDOS:")
     print("=" * 60)
     for info in all_process_info:
-        print(f"  Proceso {info['rank']}: {info['hostname']} ({info['ip']})")
+        color = get_color_for_process(info['rank'])
+        print(f"  Proceso {info['rank']}: {info['hostname']} ({info['ip']}) - Color: {color}")
         print(f"    OS: {info['os']}")
         print(f"    CPU: {info['cpu_cores']} cores | RAM: {info['memory_gb']} GB")
         print("-" * 40)
     
-    class AdvancedFireApp:
+    class MasterFireApp:
         def __init__(self, root):
             self.root = root
-            self.root.title(f"Simulación de Incendios Forestales - MPI ({size} procesos) - {hostname}")
+            self.root.title(f"Simulación de Incendios Forestales - MASTER ({size} procesos) - {hostname}")
             self.root.configure(bg="#1a1a1a")
             
             # Información de procesos
@@ -294,13 +350,13 @@ if rank == 0:
             main_frame = tk.Frame(root, bg="#1a1a1a")
             main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
             
-            # Panel izquierdo - Leyenda y estadísticas
-            left_panel = tk.Frame(main_frame, bg="#2d2d2d", relief=tk.RAISED, bd=2, width=250)
+            # Panel izquierdo - Información de procesos y leyenda
+            left_panel = tk.Frame(main_frame, bg="#2d2d2d", relief=tk.RAISED, bd=2, width=280)
             left_panel.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 10))
             left_panel.pack_propagate(False)
             
             # Título principal
-            title_label = tk.Label(left_panel, text="SIMULACIÓN MPI", bg="#2d2d2d", fg="#ff6600", 
+            title_label = tk.Label(left_panel, text="SIMULACIÓN MPI MASTER", bg="#2d2d2d", fg="#ff6600", 
                                  font=("Arial", 14, "bold"))
             title_label.pack(pady=(10, 5))
             
@@ -324,31 +380,23 @@ if rank == 0:
             # Crear leyenda
             self.create_legend(left_panel)
             
-            # Separador
-            separator2 = tk.Frame(left_panel, height=2, bg="#555555")
-            separator2.pack(fill=tk.X, padx=10, pady=10)
-            
-            # Estadísticas
-            stats_title = tk.Label(left_panel, text="ESTADÍSTICAS", bg="#2d2d2d", fg="#ffffff", 
-                                 font=("Arial", 11, "bold"))
-            stats_title.pack(pady=(5, 10))
-            
-            self.stats_frame = tk.Frame(left_panel, bg="#2d2d2d")
-            self.stats_frame.pack(fill=tk.X, padx=10)
-            
-            # Panel derecho - Simulación
+            # Panel derecho - Simulación completa
             right_panel = tk.Frame(main_frame, bg="#1a1a1a")
             right_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
             
-            # Canvas principal
+            # Canvas principal - Vista completa del bosque
             canvas_frame = tk.Frame(right_panel, bg="#1a1a1a", relief=tk.SUNKEN, bd=2)
             canvas_frame.pack(fill=tk.BOTH, expand=True)
+            
+            canvas_title = tk.Label(canvas_frame, text="VISTA COMPLETA DEL BOSQUE", 
+                                  bg="#1a1a1a", fg="#ffffff", font=("Arial", 12, "bold"))
+            canvas_title.pack(pady=5)
             
             self.canvas = tk.Canvas(canvas_frame, width=COLS*CELL_SIZE, height=ROWS*CELL_SIZE, 
                                   bg="#000000", highlightthickness=0)
             self.canvas.pack()
             
-            # Crear rectángulos
+            # Crear rectángulos para todo el bosque
             self.rects = [[
                 self.canvas.create_rectangle(
                     j*CELL_SIZE, i*CELL_SIZE,
@@ -358,7 +406,6 @@ if rank == 0:
             
             self.running = True
             self.step = 0
-            self.stats = {'trees': 0, 'fires': 0, 'burned': 0}
             
             # Controles
             control_frame = tk.Frame(right_panel, bg="#1a1a1a")
@@ -372,16 +419,12 @@ if rank == 0:
                                 bg="#ff6600", fg="white", font=("Arial", 10, "bold"))
             pause_btn.pack(side=tk.RIGHT, padx=5)
             
-            reset_btn = tk.Button(control_frame, text="Reiniciar", command=self.reset_simulation,
-                                bg="#00aa00", fg="white", font=("Arial", 10, "bold"))
-            reset_btn.pack(side=tk.RIGHT, padx=5)
-            
-            logger.info("GUI inicializada, comenzando simulación")
+            logger.info("GUI Master inicializada, comenzando simulación")
             threading.Thread(target=self.simulation_loop, daemon=True).start()
         
         def create_process_info_panel(self, parent):
             # Título
-            info_title = tk.Label(parent, text="PROCESOS ACTIVOS", bg="#2d2d2d", fg="#ffffff", 
+            info_title = tk.Label(parent, text="PROCESOS Y COLORES", bg="#2d2d2d", fg="#ffffff", 
                                  font=("Arial", 11, "bold"))
             info_title.pack(pady=(10, 10))
             
@@ -390,25 +433,31 @@ if rank == 0:
             info_frame.pack(fill=tk.X, padx=5)
             
             for i, info in enumerate(self.process_info):
+                process_color = get_color_for_process(info['rank'])
+                
                 # Frame para cada proceso
                 process_frame = tk.Frame(info_frame, bg="#404040", relief=tk.RAISED, bd=1)
-                process_frame.pack(fill=tk.X, pady=1)
+                process_frame.pack(fill=tk.X, pady=2)
                 
-                # Información del proceso
-                tk.Label(process_frame, text=f"Proceso {info['rank']}", 
-                        bg="#404040", fg="#00ff00", font=("Arial", 9, "bold")).pack(anchor="w", padx=5, pady=1)
+                # Color del proceso
+                color_frame = tk.Frame(process_frame, bg="#404040")
+                color_frame.pack(fill=tk.X, padx=5, pady=2)
                 
-                tk.Label(process_frame, text=f" {info['hostname'][:15]}", 
-                        bg="#404040", fg="#ffffff", font=("Arial", 8)).pack(anchor="w", padx=10)
+                color_box = tk.Label(color_frame, text="  ", bg=process_color, 
+                                   width=3, relief=tk.RAISED, bd=1)
+                color_box.pack(side=tk.LEFT, padx=(0, 5))
+                
+                tk.Label(color_frame, text=f"Proceso {info['rank']}", 
+                        bg="#404040", fg="#ffffff", font=("Arial", 9, "bold")).pack(side=tk.LEFT)
+                
+                tk.Label(process_frame, text=f" {info['hostname'][:12]}", 
+                        bg="#404040", fg="#cccccc", font=("Arial", 8)).pack(anchor="w", padx=10)
         
         def create_legend(self, parent):
             legend_items = [
                 (TREE_YOUNG, "Árbol Joven"),
                 (TREE_MATURE, "Árbol Maduro"),
                 (TREE_OLD, "Árbol Viejo"),
-                (FIRE_LOW, "Fuego Bajo"),
-                (FIRE_MEDIUM, "Fuego Medio"),
-                (FIRE_HIGH, "Fuego Alto"),
                 (BURNED, "Quemado"),
                 (EMPTY, "Tierra"),
                 (WATER, "Agua")
@@ -426,48 +475,15 @@ if rank == 0:
                                     font=("Arial", 9), anchor="w")
                 label_text.pack(side=tk.LEFT, fill=tk.X, expand=True)
         
-        def update_stats(self, forest_data):
-            """Actualizar estadísticas"""
-            # Limpiar frame de estadísticas
-            for widget in self.stats_frame.winfo_children():
-                widget.destroy()
-            
-            # Contar estados
-            unique, counts = np.unique(forest_data, return_counts=True)
-            state_counts = dict(zip(unique, counts))
-            
-            trees = sum(state_counts.get(state, 0) for state in [TREE_YOUNG, TREE_MATURE, TREE_OLD])
-            fires = sum(state_counts.get(state, 0) for state in [FIRE_LOW, FIRE_MEDIUM, FIRE_HIGH])
-            burned = state_counts.get(BURNED, 0)
-            total_cells = forest_data.size
-            
-            stats = [
-                ("Árboles", trees, "#00ff00"),
-                ("Fuegos", fires, "#ff0000"),
-                ("Quemados", burned, "#666666"),
-                ("Total", total_cells, "#ffffff")
-            ]
-            
-            for label, value, color in stats:
-                stat_frame = tk.Frame(self.stats_frame, bg="#2d2d2d")
-                stat_frame.pack(fill=tk.X, pady=2)
-                
-                tk.Label(stat_frame, text=label, bg="#2d2d2d", fg=color, 
-                        font=("Arial", 9, "bold")).pack(side=tk.LEFT)
-                
-                tk.Label(stat_frame, text=str(value), bg="#2d2d2d", fg="#ffffff", 
-                        font=("Arial", 9)).pack(side=tk.RIGHT)
-        
         def toggle_pause(self):
             self.running = not self.running
         
-        def reset_simulation(self):
-            self.step = 0
-            # Aquí podrías reinicializar los datos si fuera necesario
-        
         def simulation_loop(self):
-            """Bucle principal de simulación"""
-            global local_forest, local_elevation, local_humidity, local_temperature
+            """Bucle principal de simulación del master"""
+            global local_forest
+            
+            # Inicializar bosque completo
+            full_forest = np.full((ROWS, COLS), TREE_MATURE, dtype=int)
             
             while self.step < STEPS:
                 if not self.running:
@@ -478,34 +494,40 @@ if rank == 0:
                     # Notificar a todos los procesos que continúen
                     comm.bcast(True, root=0)
                     
-                    # Recopilar datos de todos los procesos
-                    all_forests = comm.gather(local_forest, root=0)
+                    # Recopilar datos de todas las regiones
+                    all_regions = comm.gather({
+                        'forest': local_forest,
+                        'bounds': (row_start, row_end, col_start, col_end)
+                    }, root=0)
                     
-                    if all_forests:
-                        # Combinar datos de todos los procesos
-                        full_forest = np.vstack(all_forests)
+                    if all_regions:
+                        # Actualizar bosque completo con datos de todas las regiones
+                        for region_data in all_regions:
+                            region_forest = region_data['forest']
+                            r_start, r_end, c_start, c_end = region_data['bounds']
+                            
+                            full_forest[r_start:r_end, c_start:c_end] = region_forest
                         
                         # Actualizar visualización
                         self.update_visualization(full_forest)
-                        self.update_stats(full_forest)
                         
                         # Actualizar contador de pasos
                         self.step_label.config(text=f"Paso: {self.step}")
                         
                         self.step += 1
                     
-                    time.sleep(0.1)  # Controlar velocidad de simulación
+                    time.sleep(0.15)  # Controlar velocidad de simulación
                     
                 except Exception as e:
-                    logger.error(f"Error en simulación: {e}")
+                    logger.error(f"Error en simulación master: {e}")
                     break
             
             # Notificar fin de simulación
             comm.bcast(False, root=0)
-            print("Simulación completada")
+            print("Simulación Master completada")
         
         def update_visualization(self, forest_data):
-            """Actualizar la visualización del canvas"""
+            """Actualizar la visualización del canvas completo"""
             for i in range(min(ROWS, forest_data.shape[0])):
                 for j in range(min(COLS, forest_data.shape[1])):
                     color = get_color_advanced(forest_data[i, j])
@@ -514,35 +536,149 @@ if rank == 0:
             # Actualizar canvas
             self.root.update_idletasks()
     
-    # Crear y ejecutar GUI
+    # Crear y ejecutar GUI Master
     root = tk.Tk()
-    app = AdvancedFireApp(root)
+    app = MasterFireApp(root)
     
-    print(f"[Rank {rank}] Iniciando GUI...")
+    print(f"[Rank {rank}] Iniciando GUI Master...")
     root.mainloop()
 
 else:
     # === PROCESOS WORKER ===
     print(f"[Rank {rank}] Iniciando como proceso worker...")
     
-    while True:
-        # Esperar señal del coordinador
-        try:
-            continue_sim = comm.bcast(None, root=0)
+    class WorkerFireApp:
+        def __init__(self, root, process_rank, region_bounds):
+            self.root = root
+            self.rank = process_rank
+            self.row_start, self.row_end, self.col_start, self.col_end = region_bounds
+            self.process_color = get_color_for_process(process_rank)
             
-            if not continue_sim:
-                print(f"[Rank {rank}] Recibida señal de fin de simulación")
-                break
+            self.root.title(f"Proceso {process_rank} - {hostname} - Región [{self.row_start}:{self.row_end}, {self.col_start}:{self.col_end}]")
+            self.root.configure(bg="#1a1a1a")
+            self.root.geometry("800x600")
             
-            # Evolucionar el bosque local
-            local_forest = spread_fire_complex(local_forest, local_elevation, 
-                                             local_humidity, local_temperature, 0)
+            # Frame principal
+            main_frame = tk.Frame(root, bg="#1a1a1a")
+            main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
             
-            # Enviar datos al coordinador
-            comm.gather(local_forest, root=0)
+            # Título
+            title_frame = tk.Frame(main_frame, bg="#2d2d2d", relief=tk.RAISED, bd=2)
+            title_frame.pack(fill=tk.X, pady=(0, 10))
             
-        except Exception as e:
-            logger.error(f"Error en worker: {e}")
-            break
+            title_label = tk.Label(title_frame, text=f"PROCESO WORKER {process_rank}", 
+                                 bg="#2d2d2d", fg=self.process_color, font=("Arial", 16, "bold"))
+            title_label.pack(pady=10)
+            
+            info_label = tk.Label(title_frame, text=f"Región: Filas {self.row_start}-{self.row_end}, Columnas {self.col_start}-{self.col_end}", 
+                                bg="#2d2d2d", fg="#ffffff", font=("Arial", 11))
+            info_label.pack(pady=(0, 5))
+            
+            host_label = tk.Label(title_frame, text=f"Host: {hostname}", 
+                                bg="#2d2d2d", fg="#cccccc", font=("Arial", 10))
+            host_label.pack(pady=(0, 10))
+            
+            # Canvas para mostrar solo la región de este proceso
+            canvas_frame = tk.Frame(main_frame, bg="#1a1a1a", relief=tk.SUNKEN, bd=2)
+            canvas_frame.pack(fill=tk.BOTH, expand=True)
+            
+            canvas_title = tk.Label(canvas_frame, text="MI REGIÓN DEL BOSQUE", 
+                                  bg="#1a1a1a", fg="#ffffff", font=("Arial", 12, "bold"))
+            canvas_title.pack(pady=5)
+            
+            region_rows = self.row_end - self.row_start
+            region_cols = self.col_end - self.col_start
+            
+            self.canvas = tk.Canvas(canvas_frame, 
+                                  width=region_cols*CELL_SIZE, 
+                                  height=region_rows*CELL_SIZE, 
+                                  bg="#000000", highlightthickness=0)
+            self.canvas.pack()
+            
+            # Crear rectángulos solo para la región
+            self.rects = [[
+                self.canvas.create_rectangle(
+                    j*CELL_SIZE, i*CELL_SIZE,
+                    (j+1)*CELL_SIZE, (i+1)*CELL_SIZE,
+                    fill=get_color_advanced(TREE_MATURE), outline="", width=0
+                ) for j in range(region_cols)] for i in range(region_rows)]
+            
+            # Información de estado
+            status_frame = tk.Frame(main_frame, bg="#2d2d2d", relief=tk.RAISED, bd=2)
+            status_frame.pack(fill=tk.X, pady=(10, 0))
+            
+            self.status_label = tk.Label(status_frame, text="Esperando datos...", 
+                                       bg="#2d2d2d", fg="#ffffff", font=("Arial", 11))
+            self.status_label.pack(pady=10)
+            
+            print(f"[Rank {rank}] GUI Worker inicializada")
+        
+        def update_visualization(self, forest_data):
+            """Actualizar visualización de la región"""
+            rows, cols = forest_data.shape
+            for i in range(rows):
+                for j in range(cols):
+                    color = get_color_advanced(forest_data[i, j])
+                    self.canvas.itemconfig(self.rects[i][j], fill=color)
+            
+            # Contar células en fuego de este proceso
+            my_fire_state = FIRE_BASE + self.rank
+            fire_count = np.sum(forest_data == my_fire_state)
+            burned_count = np.sum(forest_data == BURNED)
+            
+            self.status_label.config(text=f"Fuegos activos: {fire_count} | Células quemadas: {burned_count}")
+            
+            # Actualizar canvas
+            self.root.update_idletasks()
+    
+    # Crear GUI Worker en thread separado
+    def create_worker_gui():
+        root = tk.Tk()
+        app = WorkerFireApp(root, rank, (row_start, row_end, col_start, col_end))
+        
+        def simulation_worker_loop():
+            """Bucle de simulación para worker"""
+            global local_forest, local_elevation, local_humidity, local_temperature
+            step = 0
+            
+            while True:
+                try:
+                    # Esperar señal del coordinador
+                    continue_sim = comm.bcast(None, root=0)
+                    
+                    if not continue_sim:
+                        print(f"[Rank {rank}] Recibida señal de fin de simulación")
+                        break
+                    
+                    # Evolucionar el bosque local con fuego específico del proceso
+                    local_forest = spread_process_fire(local_forest, local_elevation, 
+                                                     local_humidity, local_temperature, rank, step)
+                    
+                    # Actualizar visualización local
+                    app.update_visualization(local_forest)
+                    
+                    # Enviar datos al coordinador
+                    comm.gather({
+                        'forest': local_forest,
+                        'bounds': (row_start, row_end, col_start, col_end)
+                    }, root=0)
+                    
+                    step += 1
+                    
+                except Exception as e:
+                    logger.error(f"Error en worker {rank}: {e}")
+                    break
+            
+            print(f"[Rank {rank}] Worker terminado")
+            root.quit()
+        
+        # Iniciar simulación en thread separado
+        threading.Thread(target=simulation_worker_loop, daemon=True).start()
+        
+        # Ejecutar GUI
+        root.mainloop()
+    
+    # Crear y ejecutar GUI Worker
+    create_worker_gui()
 
 print(f"[Rank {rank}] Proceso terminado")
