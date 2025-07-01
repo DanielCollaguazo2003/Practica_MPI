@@ -493,6 +493,10 @@ if rank == 0:
                 try:
                     # Notificar a todos los procesos que continúen
                     comm.bcast(True, root=0)
+
+                    # EL MASTER TAMBIÉN DEBE PROCESAR SU PROPIA REGIÓN
+                    local_forest = spread_process_fire(local_forest, local_elevation, 
+                                                    local_humidity, local_temperature, rank, self.step)
                     
                     # Recopilar datos de todas las regiones
                     all_regions = comm.gather({
