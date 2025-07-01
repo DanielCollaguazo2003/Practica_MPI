@@ -337,7 +337,6 @@ if rank == 0:
         print(f"    CPU: {info['cpu_cores']} cores | RAM: {info['memory_gb']} GB")
         print("-" * 40)
     
-    # CORRECCIÓN 1: Modificar la clase MasterFireApp para mostrar estado de conexión
     class MasterFireApp:
         def __init__(self, root):
             self.root = root
@@ -346,7 +345,6 @@ if rank == 0:
             
             # Información de procesos
             self.process_info = all_process_info
-            self.worker_status = {}  # Nuevo: estado de workers
             
             # Frame principal horizontal
             main_frame = tk.Frame(root, bg="#1a1a1a")
@@ -359,44 +357,80 @@ if rank == 0:
             
             # Título principal
             title_label = tk.Label(left_panel, text="SIMULACIÓN MPI MASTER", bg="#2d2d2d", fg="#ff6600", 
-                                font=("Arial", 14, "bold"))
+                                 font=("Arial", 14, "bold"))
             title_label.pack(pady=(10, 5))
             
-            # Información del cluster - ACTUALIZADA DINÁMICAMENTE
-            self.cluster_info = tk.Label(left_panel, text=f"Cluster: {size} procesos", 
-                                bg="#2d2d2d", fg="#00ff00", font=("Arial", 11, "bold"))
-            self.cluster_info.pack(pady=2)
-            
-            # NUEVO: Estado de conexión
-            self.connection_status = tk.Label(left_panel, text="Verificando conexiones...", 
-                                            bg="#2d2d2d", fg="#ffff00", font=("Arial", 10, "bold"))
-            self.connection_status.pack(pady=2)
+            # Información del cluster
+            cluster_info = tk.Label(left_panel, text=f"Cluster: {size} procesos", 
+                                  bg="#2d2d2d", fg="#00ff00", font=("Arial", 11, "bold"))
+            cluster_info.pack(pady=2)
             
             # Crear panel de información de procesos
             self.create_process_info_panel(left_panel)
             
-            # Resto del código igual...
-            # [El resto de la inicialización se mantiene igual]
+            # Separador
+            separator = tk.Frame(left_panel, height=2, bg="#555555")
+            separator.pack(fill=tk.X, padx=10, pady=10)
+            
+            # Título de la leyenda
+            legend_title = tk.Label(left_panel, text="LEYENDA", bg="#2d2d2d", fg="#ffffff", 
+                                  font=("Arial", 12, "bold"))
+            legend_title.pack(pady=(5, 10))
+            
+            # Crear leyenda
+            self.create_legend(left_panel)
+            
+            # Panel derecho - Simulación completa
+            right_panel = tk.Frame(main_frame, bg="#1a1a1a")
+            right_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+            
+            # Canvas principal - Vista completa del bosque
+            canvas_frame = tk.Frame(right_panel, bg="#1a1a1a", relief=tk.SUNKEN, bd=2)
+            canvas_frame.pack(fill=tk.BOTH, expand=True)
+            
+            canvas_title = tk.Label(canvas_frame, text="VISTA COMPLETA DEL BOSQUE", 
+                                  bg="#1a1a1a", fg="#ffffff", font=("Arial", 12, "bold"))
+            canvas_title.pack(pady=5)
+            
+            self.canvas = tk.Canvas(canvas_frame, width=COLS*CELL_SIZE, height=ROWS*CELL_SIZE, 
+                                  bg="#000000", highlightthickness=0)
+            self.canvas.pack()
+            
+            # Crear rectángulos para todo el bosque
+            self.rects = [[
+                self.canvas.create_rectangle(
+                    j*CELL_SIZE, i*CELL_SIZE,
+                    (j+1)*CELL_SIZE, (i+1)*CELL_SIZE,
+                    fill=get_color_advanced(TREE_MATURE), outline="", width=0
+                ) for j in range(COLS)] for i in range(ROWS)]
             
             self.running = True
             self.step = 0
-            self.connected_workers = 0  # Nuevo: contador de workers conectados
+            
+            # Controles
+            control_frame = tk.Frame(right_panel, bg="#1a1a1a")
+            control_frame.pack(fill=tk.X, pady=5)
+            
+            self.step_label = tk.Label(control_frame, text="Paso: 0", bg="#1a1a1a", fg="#ffffff", 
+                                     font=("Arial", 12, "bold"))
+            self.step_label.pack(side=tk.LEFT, padx=10)
+            
+            pause_btn = tk.Button(control_frame, text="⏸Pausar", command=self.toggle_pause,
+                                bg="#ff6600", fg="white", font=("Arial", 10, "bold"))
+            pause_btn.pack(side=tk.RIGHT, padx=5)
             
             logger.info("GUI Master inicializada, comenzando simulación")
             threading.Thread(target=self.simulation_loop, daemon=True).start()
         
         def create_process_info_panel(self, parent):
             # Título
-            info_title = tk.Label(parent, text="PROCESOS Y ESTADO", bg="#2d2d2d", fg="#ffffff", 
-                                font=("Arial", 11, "bold"))
+            info_title = tk.Label(parent, text="PROCESOS Y COLORES", bg="#2d2d2d", fg="#ffffff", 
+                                 font=("Arial", 11, "bold"))
             info_title.pack(pady=(10, 10))
             
             # Frame para información de procesos
             info_frame = tk.Frame(parent, bg="#2d2d2d")
             info_frame.pack(fill=tk.X, padx=5)
-            
-            # Diccionario para almacenar referencias a labels de estado
-            self.process_status_labels = {}
             
             for i, info in enumerate(self.process_info):
                 process_color = get_color_for_process(info['rank'])
@@ -410,79 +444,43 @@ if rank == 0:
                 color_frame.pack(fill=tk.X, padx=5, pady=2)
                 
                 color_box = tk.Label(color_frame, text="  ", bg=process_color, 
-                                width=3, relief=tk.RAISED, bd=1)
+                                   width=3, relief=tk.RAISED, bd=1)
                 color_box.pack(side=tk.LEFT, padx=(0, 5))
                 
-                rank_label = tk.Label(color_frame, text=f"Proceso {info['rank']}", 
-                        bg="#404040", fg="#ffffff", font=("Arial", 9, "bold"))
-                rank_label.pack(side=tk.LEFT)
-                
-                # NUEVO: Label de estado dinámico
-                if info['rank'] == 0:
-                    status_text = "🟢 MASTER"
-                    status_color = "#00ff00"
-                else:
-                    status_text = "🔴 DESCONECTADO"
-                    status_color = "#ff0000"
-                
-                status_label = tk.Label(color_frame, text=status_text, 
-                                    bg="#404040", fg=status_color, font=("Arial", 8, "bold"))
-                status_label.pack(side=tk.RIGHT)
-                
-                # Guardar referencia al label de estado
-                self.process_status_labels[info['rank']] = status_label
+                tk.Label(color_frame, text=f"Proceso {info['rank']}", 
+                        bg="#404040", fg="#ffffff", font=("Arial", 9, "bold")).pack(side=tk.LEFT)
                 
                 tk.Label(process_frame, text=f" {info['hostname'][:12]}", 
                         bg="#404040", fg="#cccccc", font=("Arial", 8)).pack(anchor="w", padx=10)
         
-        def update_worker_status(self, worker_data):
-            """Actualizar el estado de los workers basado en datos recibidos"""
-            active_workers = set()
+        def create_legend(self, parent):
+            legend_items = [
+                (TREE_YOUNG, "Árbol Joven"),
+                (TREE_MATURE, "Árbol Maduro"),
+                (TREE_OLD, "Árbol Viejo"),
+                (BURNED, "Quemado"),
+                (EMPTY, "Tierra"),
+                (WATER, "Agua")
+            ]
             
-            if worker_data:
-                for region_data in worker_data:
-                    if 'bounds' in region_data:
-                        # Determinar qué worker envió estos datos
-                        bounds = region_data['bounds']
-                        # Buscar qué proceso tiene estas bounds
-                        for info in self.process_info:
-                            worker_rank = info['rank']
-                            worker_bounds = get_region_bounds(worker_rank, size, ROWS, COLS)
-                            if worker_bounds == bounds:
-                                active_workers.add(worker_rank)
-                                break
-            
-            # Actualizar labels de estado
-            connected_count = 0
-            for info in self.process_info:
-                rank = info['rank']
-                if rank in self.process_status_labels:
-                    if rank == 0:
-                        # Master siempre conectado
-                        self.process_status_labels[rank].config(text="🟢 MASTER", fg="#00ff00")
-                        connected_count += 1
-                    elif rank in active_workers:
-                        # Worker conectado y enviando datos
-                        self.process_status_labels[rank].config(text="🟢 CONECTADO", fg="#00ff00")
-                        connected_count += 1
-                    else:
-                        # Worker desconectado
-                        self.process_status_labels[rank].config(text="🔴 DESCONECTADO", fg="#ff0000")
-            
-            # Actualizar información del cluster
-            self.connected_workers = connected_count
-            self.cluster_info.config(text=f"Cluster: {connected_count}/{size} procesos activos")
-            
-            if connected_count == size:
-                self.connection_status.config(text="✅ Todos los procesos conectados", fg="#00ff00")
-            elif connected_count > 1:
-                self.connection_status.config(text=f"⚠️ {connected_count-1} workers conectados", fg="#ffff00")
-            else:
-                self.connection_status.config(text="❌ Sin workers conectados", fg="#ff0000")
+            for state, label in legend_items:
+                item_frame = tk.Frame(parent, bg="#2d2d2d")
+                item_frame.pack(fill=tk.X, padx=10, pady=1)
+                
+                color_box = tk.Label(item_frame, text="  ", bg=get_color_advanced(state), 
+                                   width=3, relief=tk.RAISED, bd=1)
+                color_box.pack(side=tk.LEFT, padx=(0, 5))
+                
+                label_text = tk.Label(item_frame, text=label, bg="#2d2d2d", fg="#ffffff", 
+                                    font=("Arial", 9), anchor="w")
+                label_text.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
+        def toggle_pause(self):
+            self.running = not self.running
         
         def simulation_loop(self):
-            """Bucle principal de simulación del master - CORREGIDO"""
-            global local_forest, local_elevation, local_humidity, local_temperature
+            """Bucle principal de simulación del master"""
+            global local_forest
             
             # Inicializar bosque completo
             full_forest = np.full((ROWS, COLS), TREE_MATURE, dtype=int)
@@ -495,22 +493,18 @@ if rank == 0:
                 try:
                     # Notificar a todos los procesos que continúen
                     comm.bcast(True, root=0)
-                    
+
                     # EL MASTER TAMBIÉN DEBE PROCESAR SU PROPIA REGIÓN
                     local_forest = spread_process_fire(local_forest, local_elevation, 
                                                     local_humidity, local_temperature, rank, self.step)
                     
-                    # Recopilar datos de todas las regiones (incluyendo la del master)
+                    # Recopilar datos de todas las regiones
                     all_regions = comm.gather({
                         'forest': local_forest,
-                        'bounds': (row_start, row_end, col_start, col_end),
-                        'rank': rank  # Agregar información de rank
+                        'bounds': (row_start, row_end, col_start, col_end)
                     }, root=0)
                     
                     if all_regions:
-                        # ACTUALIZAR ESTADO DE WORKERS
-                        self.update_worker_status(all_regions)
-                        
                         # Actualizar bosque completo con datos de todas las regiones
                         for region_data in all_regions:
                             region_forest = region_data['forest']
@@ -522,7 +516,7 @@ if rank == 0:
                         self.update_visualization(full_forest)
                         
                         # Actualizar contador de pasos
-                        self.step_label.config(text=f"Paso: {self.step} | Workers: {self.connected_workers-1}/{size-1}")
+                        self.step_label.config(text=f"Paso: {self.step}")
                         
                         self.step += 1
                     
@@ -530,59 +524,21 @@ if rank == 0:
                     
                 except Exception as e:
                     logger.error(f"Error en simulación master: {e}")
-                    print(f"[MASTER] Error: {e}")
                     break
             
             # Notificar fin de simulación
             comm.bcast(False, root=0)
             print("Simulación Master completada")
-
-    # CORRECCIÓN 2: Modificar el worker para incluir información de rank
-    def simulation_worker_loop():
-        """Bucle de simulación para worker - CORREGIDO"""
-        global local_forest, local_elevation, local_humidity, local_temperature
-        step = 0
         
-        print(f"[Rank {rank}] Worker iniciando bucle de simulación...")
-        
-        while True:
-            try:
-                # Esperar señal del coordinador
-                continue_sim = comm.bcast(None, root=0)
-                
-                if not continue_sim:
-                    print(f"[Rank {rank}] Recibida señal de fin de simulación")
-                    break
-                
-                # EVOLUCIONAR EL BOSQUE LOCAL
-                local_forest = spread_process_fire(local_forest, local_elevation, 
-                                                local_humidity, local_temperature, rank, step)
-                
-                # Debug: Contar fuegos activos
-                my_fire_state = FIRE_BASE + rank
-                fire_count = np.sum(local_forest == my_fire_state)
-                burned_count = np.sum(local_forest == BURNED)
-                
-                if step % 10 == 0:  # Log cada 10 pasos
-                    print(f"[Rank {rank}] Paso {step}: {fire_count} fuegos, {burned_count} quemadas")
-                
-                # Enviar datos al coordinador con información de rank
-                comm.gather({
-                    'forest': local_forest,
-                    'bounds': (row_start, row_end, col_start, col_end),
-                    'rank': rank,  # Incluir rank para identificación
-                    'fires': fire_count,
-                    'burned': burned_count
-                }, root=0)
-                
-                step += 1
-                
-            except Exception as e:
-                logger.error(f"Error en worker {rank}: {e}")
-                print(f"[Rank {rank}] Error: {e}")
-                break
-        
-        print(f"[Rank {rank}] Worker terminado")
+        def update_visualization(self, forest_data):
+            """Actualizar la visualización del canvas completo"""
+            for i in range(min(ROWS, forest_data.shape[0])):
+                for j in range(min(COLS, forest_data.shape[1])):
+                    color = get_color_advanced(forest_data[i, j])
+                    self.canvas.itemconfig(self.rects[i][j], fill=color)
+            
+            # Actualizar canvas
+            self.root.update_idletasks()
     
     # Crear y ejecutar GUI Master
     root = tk.Tk()
