@@ -155,7 +155,7 @@ def generate_region_terrain(row_start, row_end, col_start, col_end):
 # --- Inicialización con fuegos por proceso ---
 def initialize_process_fires(forest, process_rank):
     """Inicializar fuegos específicos para cada proceso"""
-    num_fires = random.randint(1, 3)
+    num_fires = random.randint(2, 5)  # Aumentar número de fuegos iniciales
     fires_created = 0
     fire_state = FIRE_BASE + process_rank  # Fuego único por proceso
     
@@ -195,13 +195,13 @@ def spread_process_fire(forest, elevation, humidity, temperature, process_rank, 
             if cell == my_fire_state:
                 # El fuego se consume gradualmente
                 burn_time = random.random()
-                if burn_time < 0.08:  # 8% chance de quemarse completamente
+                if burn_time < 0.05:  # Reducir probabilidad de extinción para ver más fuego
                     new_forest[i, j] = BURNED
                     fires_extinguished += 1
             
             elif cell == BURNED:
                 # Cenizas después de quemar
-                if random.random() < 0.03:
+                if random.random() < 0.02:
                     new_forest[i, j] = ASH
             
             elif cell in [TREE_YOUNG, TREE_MATURE, TREE_OLD]:
@@ -215,7 +215,7 @@ def spread_process_fire(forest, elevation, humidity, temperature, process_rank, 
                         
                         # Solo responder al fuego de este proceso
                         if neighbor == my_fire_state:
-                            base_prob = 0.25  # Probabilidad base
+                            base_prob = 0.35  # Aumentar probabilidad base
                             
                             # Factor de viento
                             wind_factor = 1.0
@@ -247,7 +247,7 @@ def spread_process_fire(forest, elevation, humidity, temperature, process_rank, 
                             fire_prob += base_prob * wind_factor * elev_factor * humid_factor * temp_factor * tree_factor
                 
                 # Ignición con el fuego específico de este proceso
-                if random.random() < min(fire_prob, 0.6):
+                if random.random() < min(fire_prob, 0.7):  # Aumentar probabilidad máxima
                     new_forest[i, j] = my_fire_state
                     fires_spread += 1
     
@@ -396,6 +396,9 @@ if rank == 0:
                                   bg="#000000", highlightthickness=0)
             self.canvas.pack()
             
+            # Inicializar bosque completo con árboles
+            self.full_forest = np.full((ROWS, COLS), TREE_MATURE, dtype=int)
+            
             # Crear rectángulos para todo el bosque
             self.rects = [[
                 self.canvas.create_rectangle(
@@ -414,6 +417,11 @@ if rank == 0:
             self.step_label = tk.Label(control_frame, text="Paso: 0", bg="#1a1a1a", fg="#ffffff", 
                                      font=("Arial", 12, "bold"))
             self.step_label.pack(side=tk.LEFT, padx=10)
+            
+            # Estadísticas de fuego
+            self.stats_label = tk.Label(control_frame, text="Fuegos: 0 | Quemados: 0", 
+                                      bg="#1a1a1a", fg="#ffff00", font=("Arial", 10))
+            self.stats_label.pack(side=tk.LEFT, padx=20)
             
             pause_btn = tk.Button(control_frame, text="⏸Pausar", command=self.toggle_pause,
                                 bg="#ff6600", fg="white", font=("Arial", 10, "bold"))
@@ -482,9 +490,6 @@ if rank == 0:
             """Bucle principal de simulación del master"""
             global local_forest
             
-            # Inicializar bosque completo
-            full_forest = np.full((ROWS, COLS), TREE_MATURE, dtype=int)
-            
             while self.step < STEPS:
                 if not self.running:
                     time.sleep(0.1)
@@ -492,8 +497,8 @@ if rank == 0:
                 
                 try:
                     # Notificar a todos los procesos que continúen
-                    comm.bcast(True, root=0)  # Notificar a todos los procesos que continúen con la simulación
-
+                    comm.bcast(True, root=0)
+                    
                     # EL MASTER TAMBIÉN DEBE PROCESAR SU PROPIA REGIÓN
                     local_forest = spread_process_fire(local_forest, local_elevation, 
                                                     local_humidity, local_temperature, rank, self.step)
@@ -510,32 +515,49 @@ if rank == 0:
                             region_forest = region_data['forest']
                             r_start, r_end, c_start, c_end = region_data['bounds']
                             
-                            full_forest[r_start:r_end, c_start:c_end] = region_forest
+                            self.full_forest[r_start:r_end, c_start:c_end] = region_forest
                         
                         # Actualizar visualización
-                        self.update_visualization(full_forest)
+                        self.update_visualization(self.full_forest)
                         
                         # Actualizar contador de pasos
                         self.step_label.config(text=f"Paso: {self.step}")
                         
                         self.step += 1
                     
-                    time.sleep(0.15)  # Controlar velocidad de simulación
+                    time.sleep(0.1)  # Controlar velocidad de simulación
                     
                 except Exception as e:
                     logger.error(f"Error en simulación master: {e}")
+                    print(f"[Rank {rank}] Error en simulación: {e}")
                     break
             
             # Notificar fin de simulación
-            comm.bcast(False, root=0)
+            try:
+                comm.bcast(False, root=0)
+            except:
+                pass
             print("Simulación Master completada")
         
         def update_visualization(self, forest_data):
             """Actualizar la visualización del canvas completo"""
+            fire_count = 0
+            burned_count = 0
+            
             for i in range(min(ROWS, forest_data.shape[0])):
                 for j in range(min(COLS, forest_data.shape[1])):
-                    color = get_color_advanced(forest_data[i, j])
+                    cell_state = forest_data[i, j]
+                    color = get_color_advanced(cell_state)
                     self.canvas.itemconfig(self.rects[i][j], fill=color)
+                    
+                    # Contar estadísticas
+                    if cell_state >= FIRE_BASE:
+                        fire_count += 1
+                    elif cell_state == BURNED:
+                        burned_count += 1
+            
+            # Actualizar estadísticas
+            self.stats_label.config(text=f"Fuegos: {fire_count} | Quemados: {burned_count}")
             
             # Actualizar canvas
             self.root.update_idletasks()
@@ -551,149 +573,47 @@ else:
     # === PROCESOS WORKER ===
     print(f"[Rank {rank}] Iniciando como proceso worker...")
     
-    class WorkerFireApp:
-        def __init__(self, root, process_rank, region_bounds):
-            self.root = root
-            self.rank = process_rank
-            self.row_start, self.row_end, self.col_start, self.col_end = region_bounds
-            self.process_color = get_color_for_process(process_rank)
-            
-            self.root.title(f"Proceso {process_rank} - {hostname} - Región [{self.row_start}:{self.row_end}, {self.col_start}:{self.col_end}]")
-            self.root.configure(bg="#1a1a1a")
-            self.root.geometry("800x600")
-            
-            # Frame principal
-            main_frame = tk.Frame(root, bg="#1a1a1a")
-            main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-            
-            # Título
-            title_frame = tk.Frame(main_frame, bg="#2d2d2d", relief=tk.RAISED, bd=2)
-            title_frame.pack(fill=tk.X, pady=(0, 10))
-            
-            title_label = tk.Label(title_frame, text=f"PROCESO WORKER {process_rank}", 
-                                 bg="#2d2d2d", fg=self.process_color, font=("Arial", 16, "bold"))
-            title_label.pack(pady=10)
-            
-            info_label = tk.Label(title_frame, text=f"Región: Filas {self.row_start}-{self.row_end}, Columnas {self.col_start}-{self.col_end}", 
-                                bg="#2d2d2d", fg="#ffffff", font=("Arial", 11))
-            info_label.pack(pady=(0, 5))
-            
-            host_label = tk.Label(title_frame, text=f"Host: {hostname}", 
-                                bg="#2d2d2d", fg="#cccccc", font=("Arial", 10))
-            host_label.pack(pady=(0, 10))
-            
-            # Canvas para mostrar solo la región de este proceso
-            canvas_frame = tk.Frame(main_frame, bg="#1a1a1a", relief=tk.SUNKEN, bd=2)
-            canvas_frame.pack(fill=tk.BOTH, expand=True)
-            
-            canvas_title = tk.Label(canvas_frame, text="MI REGIÓN DEL BOSQUE", 
-                                  bg="#1a1a1a", fg="#ffffff", font=("Arial", 12, "bold"))
-            canvas_title.pack(pady=5)
-            
-            region_rows = self.row_end - self.row_start
-            region_cols = self.col_end - self.col_start
-            
-            self.canvas = tk.Canvas(canvas_frame, 
-                                  width=region_cols*CELL_SIZE, 
-                                  height=region_rows*CELL_SIZE, 
-                                  bg="#000000", highlightthickness=0)
-            self.canvas.pack()
-            
-            # Crear rectángulos solo para la región
-            self.rects = [[
-                self.canvas.create_rectangle(
-                    j*CELL_SIZE, i*CELL_SIZE,
-                    (j+1)*CELL_SIZE, (i+1)*CELL_SIZE,
-                    fill=get_color_advanced(TREE_MATURE), outline="", width=0
-                ) for j in range(region_cols)] for i in range(region_rows)]
-            
-            # Información de estado
-            status_frame = tk.Frame(main_frame, bg="#2d2d2d", relief=tk.RAISED, bd=2)
-            status_frame.pack(fill=tk.X, pady=(10, 0))
-            
-            self.status_label = tk.Label(status_frame, text="Esperando datos...", 
-                                       bg="#2d2d2d", fg="#ffffff", font=("Arial", 11))
-            self.status_label.pack(pady=10)
-            
-            print(f"[Rank {rank}] GUI Worker inicializada")
-        
-        def update_visualization(self, forest_data):
-            """Actualizar visualización de la región"""
-            rows, cols = forest_data.shape
-            for i in range(rows):
-                for j in range(cols):
-                    color = get_color_advanced(forest_data[i, j])
-                    self.canvas.itemconfig(self.rects[i][j], fill=color)
-            
-            # Contar células en fuego de este proceso
-            my_fire_state = FIRE_BASE + self.rank
-            fire_count = np.sum(forest_data == my_fire_state)
-            burned_count = np.sum(forest_data == BURNED)
-            
-            self.status_label.config(text=f"Fuegos activos: {fire_count} | Células quemadas: {burned_count}")
-            
-            # Actualizar canvas
-            self.root.update_idletasks()
-    
-    def simulation_worker_loop(root):
-        """Bucle de simulación para worker"""
+    def simulation_worker_loop():
+        """Bucle de simulación para worker - SIN GUI"""
         global local_forest, local_elevation, local_humidity, local_temperature
         step = 0
+        
+        print(f"[Rank {rank}] Worker iniciando bucle de simulación...")
+        
         while True:
             try:
-                # Esperar señal del coordinador (sincronización con master)
+                # Esperar señal del coordinador
                 continue_simulation = comm.bcast(None, root=0)
                 if not continue_simulation:
                     print(f"[Rank {rank}] Recibida señal de fin de simulación")
                     break
-                # Evolucionar el bosque local con fuego específico del proceso
+                
+                # Evolucionar el bosque local
                 local_forest = spread_process_fire(local_forest, local_elevation,
                                                    local_humidity, local_temperature, rank, step)
-                # Actualizar visualización local
-                app.update_visualization(local_forest)
-                # Enviar datos al coordinador (master)
+                
+                # Contar fuegos activos para debug
+                my_fire_state = FIRE_BASE + rank
+                fire_count = np.sum(local_forest == my_fire_state)
+                if step % 10 == 0:  # Log cada 10 pasos
+                    print(f"[Rank {rank}] Paso {step}: {fire_count} fuegos activos")
+                
+                # Enviar datos al coordinador
                 comm.gather({
                     'forest': local_forest,
                     'bounds': (row_start, row_end, col_start, col_end)
                 }, root=0)
+                
                 step += 1
+                
             except Exception as e:
                 logger.error(f"Error en worker {rank}: {e}")
+                print(f"[Rank {rank}] Error en worker: {e}")
                 break
+        
         print(f"[Rank {rank}] Worker terminado")
-        root.quit()
     
-    # Crear GUI Worker en thread separado
-    def create_worker_gui():
-        print(f"[Rank {rank}] Creando GUI Worker...")
-        
-        root = tk.Tk()
-        app = WorkerFireApp(root, rank, (row_start, row_end, col_start, col_end))
-        
-        # INICIAR SIMULACIÓN EN THREAD SEPARADO INMEDIATAMENTE
-        print(f"[Rank {rank}] Iniciando thread de simulación...")
-        sim_thread = threading.Thread(target=simulation_worker_loop, args=(root,), daemon=True)
-        sim_thread.start()
-        
-        # Función para actualizar GUI periódicamente
-        def update_gui():
-            try:
-                app.update_visualization(local_forest)
-                # Programar próxima actualización
-                root.after(100, update_gui)  # Actualizar cada 100ms
-            except Exception as e:
-                print(f"[Rank {rank}] Error actualizando GUI: {e}")
-        
-        # Iniciar actualizaciones de GUI
-        root.after(100, update_gui)
-        
-        # Ejecutar GUI
-        print(f"[Rank {rank}] Ejecutando GUI...")
-        root.mainloop()
-    
-    # Crear y ejecutar GUI Worker
-    create_worker_gui()
-    
+    # Verificar fuegos iniciales
     print(f"[Rank {rank}] Verificando fuegos iniciales...")
     my_fire_state = FIRE_BASE + rank
     initial_fires = np.sum(local_forest == my_fire_state)
@@ -705,12 +625,8 @@ else:
         local_forest = initialize_process_fires(local_forest, rank)
         new_fires = np.sum(local_forest == my_fire_state)
         print(f"[Rank {rank}] Fuegos creados: {new_fires}")
-
-    # CORRECCIÓN 4: Asegurar que solo los workers ejecuten create_worker_gui
-    if rank != 0:
-        print(f"[Rank {rank}] Ejecutando como worker...")
-        create_worker_gui()
-    else:
-        print(f"[Rank {rank}] Ejecutando como master...")
+    
+    # Ejecutar simulación worker
+    simulation_worker_loop()
 
 print(f"[Rank {rank}] Proceso terminado")
