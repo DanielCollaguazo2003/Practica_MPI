@@ -261,13 +261,13 @@ def get_color_for_process(process_rank):
     """Obtener color único para cada proceso"""
     colors = [
         "#FF0000",  # Rojo - Proceso 0
-        "#00FF00",  # Verde - Proceso 1
+        "#800080",  # Púrpura - Proceso 1
         "#0000FF",  # Azul - Proceso 2
         "#FFFF00",  # Amarillo - Proceso 3
         "#FF00FF",  # Magenta - Proceso 4
         "#00FFFF",  # Cian - Proceso 5
         "#FFA500",  # Naranja - Proceso 6
-        "#800080",  # Púrpura - Proceso 7
+        "#00FF00",  # Verde - Proceso 7
         "#FFC0CB",  # Rosa - Proceso 8
         "#A52A2A",  # Marrón - Proceso 9
     ]
