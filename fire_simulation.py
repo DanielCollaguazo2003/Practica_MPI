@@ -635,7 +635,7 @@ else:
             # Actualizar canvas
             self.root.update_idletasks()
     
-    def simulation_worker_loop():
+    def simulation_worker_loop(root):
         """Bucle de simulación para worker"""
         global local_forest, local_elevation, local_humidity, local_temperature
         step = 0
@@ -672,7 +672,7 @@ else:
         
         # INICIAR SIMULACIÓN EN THREAD SEPARADO INMEDIATAMENTE
         print(f"[Rank {rank}] Iniciando thread de simulación...")
-        sim_thread = threading.Thread(target=simulation_worker_loop, daemon=True)
+        sim_thread = threading.Thread(target=simulation_worker_loop, args=(root,), daemon=True)
         sim_thread.start()
         
         # Función para actualizar GUI periódicamente
